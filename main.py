@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ import models
 from models import Chat, Message, User
 from fastapi import HTTPException
 import bcrypt
+from auth import get_current_user_id, verify_chat_ownership
 
 # ==============================
 # Create Tables
@@ -44,6 +45,10 @@ def get_db():
 class PromptRequest(BaseModel):
     prompt: str
     chat_id: int
+    # user_id dihapus dari request body, akan diambil dari auth header
+
+class CreateChatRequest(BaseModel):
+    pass  # user_id akan diambil dari auth header
 
 class RegisterRequest(BaseModel):
     username: str
@@ -64,30 +69,60 @@ class OAuthLoginRequest(BaseModel):
 # Create New Chat
 # ==============================
 @app.post("/create-chat")
-def create_chat(db: Session = Depends(get_db)):
-    new_chat = Chat(title="New Chat")
+def create_chat(
+    request: CreateChatRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    print(f"💬 Creating new chat for user_id: {user_id}")
+    
+    new_chat = Chat(title="New Chat", user_id=user_id)
     db.add(new_chat)
     db.commit()
     db.refresh(new_chat)
 
+    print(f"✅ Chat created: ID {new_chat.id} for user {user_id}")
+    
     return {"chat_id": new_chat.id}
 
 
 # ==============================
-# Get All Chats
+# Get All Chats by User
 # ==============================
 @app.get("/chats")
-def get_chats(db: Session = Depends(get_db)):
-    chats = db.query(Chat).all()
+def get_chats(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    print(f"📋 Fetching chats for user_id: {user_id}")
+    
+    chats = db.query(Chat).filter(Chat.user_id == user_id).order_by(Chat.id.desc()).all()
+    
+    print(f"✅ Found {len(chats)} chats for user {user_id}")
+    
     return chats
 
 
 # ==============================
 # Get Messages by Chat
 # ==============================
+# Get Messages by Chat
+# ==============================
 @app.get("/messages/{chat_id}")
-def get_messages(chat_id: int, db: Session = Depends(get_db)):
+def get_messages(
+    chat_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    print(f"📨 Fetching messages for chat_id: {chat_id}, user_id: {user_id}")
+    
+    # Validasi bahwa chat milik user (WAJIB)
+    verify_chat_ownership(chat_id, user_id, db)
+    
     messages = db.query(Message).filter(Message.chat_id == chat_id).all()
+    
+    print(f"✅ Found {len(messages)} messages for chat {chat_id}")
+    
     return messages
 
 
@@ -95,13 +130,18 @@ def get_messages(chat_id: int, db: Session = Depends(get_db)):
 # Generate + Save Messages
 # ==============================
 @app.post("/generate")
-def generate(request: PromptRequest, db: Session = Depends(get_db)):
+def generate(
+    request: PromptRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    print(f"🤖 Generate request from user {user_id} for chat {request.chat_id}")
 
-    # Ambil chat
-    chat = db.query(Chat).filter(Chat.id == request.chat_id).first()
+    # Validasi chat milik user (WAJIB)
+    chat = verify_chat_ownership(request.chat_id, user_id, db)
 
     # Jika title masih default → ubah pakai potongan prompt pertama
-    if chat and chat.title == "New Chat":
+    if chat.title == "New Chat":
         chat.title = request.prompt[:25] + "..."
         db.commit()
 
@@ -109,7 +149,8 @@ def generate(request: PromptRequest, db: Session = Depends(get_db)):
     user_msg = Message(
         role="user",
         content=request.prompt,
-        chat_id=request.chat_id
+        chat_id=request.chat_id,
+        user_id=user_id
     )
     db.add(user_msg)
     db.commit()
@@ -126,40 +167,14 @@ def generate(request: PromptRequest, db: Session = Depends(get_db)):
     ai_msg = Message(
         role="ai",
         content=ai_text,
-        chat_id=request.chat_id
+        chat_id=request.chat_id,
+        user_id=user_id
     )
     db.add(ai_msg)
     db.commit()
 
-    return {"result": ai_text}
+    print(f"✅ Generated response for chat {request.chat_id}")
 
-    # 1️⃣ Save User Message
-    user_msg = Message(
-        role="user",
-        content=request.prompt,
-        chat_id=request.chat_id
-    )
-    db.add(user_msg)
-    db.commit()
-
-    # 2️⃣ Call AI Engine
-    response = requests.post(
-        "http://localhost:9000/generate",
-        json={"prompt": request.prompt}
-    )
-
-    ai_text = response.json()["result"]
-
-    # 3️⃣ Save AI Message
-    ai_msg = Message(
-        role="ai",
-        content=ai_text,
-        chat_id=request.chat_id
-    )
-    db.add(ai_msg)
-    db.commit()
-
-    # 4️⃣ Return Response
     return {"result": ai_text}
 
 @app.post("/register")
@@ -234,3 +249,21 @@ def oauth_login(request: OAuthLoginRequest, db: Session = Depends(get_db)):
             "email": new_user.email,
             "name": new_user.username
         }
+
+@app.get("/user-by-email")
+def get_user_by_email(email: str, db: Session = Depends(get_db)):
+    print(f"🔍 Looking up user by email: {email}")
+    
+    user = db.query(User).filter(User.email == email).first()
+    
+    if not user:
+        print(f"❌ User not found: {email}")
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    print(f"✅ User found: {user.email} (ID: {user.id})")
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.username
+    }
