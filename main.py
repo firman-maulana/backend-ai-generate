@@ -6,7 +6,9 @@ import requests
 
 from database import engine, Base, SessionLocal
 import models
-from models import Chat, Message
+from models import Chat, Message, User
+from fastapi import HTTPException
+import bcrypt
 
 # ==============================
 # Create Tables
@@ -42,6 +44,20 @@ def get_db():
 class PromptRequest(BaseModel):
     prompt: str
     chat_id: int
+
+class RegisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class OAuthLoginRequest(BaseModel):
+    email: str
+    username: str
+    provider: str
 
 
 # ==============================
@@ -145,3 +161,76 @@ def generate(request: PromptRequest, db: Session = Depends(get_db)):
 
     # 4️⃣ Return Response
     return {"result": ai_text}
+
+@app.post("/register")
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+
+    existing_user = db.query(User).filter(User.email == request.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    hashed_password = bcrypt.hashpw(
+        request.password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+    new_user = User(
+        username=request.username,
+        email=request.email,
+        password=hashed_password
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return {"id": new_user.id, "email": new_user.email}
+
+@app.post("/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+
+    user = db.query(User).filter(User.email == request.email).first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if not bcrypt.checkpw(
+        request.password.encode("utf-8"),
+        user.password.encode("utf-8")
+    ):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.username
+    }
+
+@app.post("/oauth-login")
+def oauth_login(request: OAuthLoginRequest, db: Session = Depends(get_db)):
+    # Cek apakah user sudah ada
+    user = db.query(User).filter(User.email == request.email).first()
+
+    if user:
+        # User sudah ada, return data user
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.username
+        }
+    else:
+        # User baru, buat akun baru
+        new_user = User(
+            username=request.username,
+            email=request.email,
+            password=None  # OAuth user tidak punya password
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        return {
+            "id": new_user.id,
+            "email": new_user.email,
+            "name": new_user.username
+        }
