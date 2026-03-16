@@ -60,3 +60,34 @@ def download_and_upload_video(video_url: str) -> str:
         print(f"❌ Error uploading to Supabase: {e}")
         # Kembalikan URL asli jika gagal upload
         return video_url
+
+def upload_community_video(file_content: bytes, filename: str) -> str:
+    """
+    Uploads a video file directly to the community-videos bucket.
+    """
+    if not supabase:
+        print("⚠️ Supabase not configured.")
+        return None
+
+    try:
+        bucket_name = "Video Template"
+        
+        # Ensure unique filename
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        print(f"⬆️ Uploading community video to Supabase: {unique_filename}...")
+        
+        # Upload ke Supabase
+        res = supabase.storage.from_(bucket_name).upload(
+            path=unique_filename,
+            file=file_content,
+            file_options={"content-type": "video/mp4"}
+        )
+
+        # Dapatkan public URL
+        public_url = supabase.storage.from_(bucket_name).get_public_url(unique_filename)
+        return public_url
+
+    except Exception as e:
+        print(f"❌ Error uploading community video: {e}")
+        return None

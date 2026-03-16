@@ -12,6 +12,7 @@ class User(Base):
     password = Column(String, nullable=True)  # null kalau login google
     
     messages = relationship("Message", back_populates="user")
+    video_template = relationship("VideoTemplate", back_populates="user")
 
 
 class Message(Base):
@@ -25,3 +26,18 @@ class Message(Base):
     meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' (reserved word)
 
     user = relationship("User", back_populates="messages")
+
+
+class VideoTemplate(Base):
+    __tablename__ = "video_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    description = Column(Text, nullable=True)
+    video_url = Column(String)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    likes = Column(Integer, default=0)
+    duration = Column(String, default="00:00")
+    date = Column(Date, default=date.today)
+
+    user = relationship("User", back_populates="video_template")

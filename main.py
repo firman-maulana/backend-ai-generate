@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, Header, UploadFile, File
+from fastapi import FastAPI, Depends, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -10,11 +10,11 @@ from pathlib import Path
 
 from database import engine, Base, SessionLocal
 import models
-from models import Message, User
+from models import Message, User, VideoTemplate
 from fastapi import HTTPException
 import bcrypt
 from auth import get_current_user_id
-from utils import download_and_upload_video
+from utils import download_and_upload_video, upload_community_video
 
 # ==============================
 # Create Tables
@@ -81,6 +81,10 @@ class OAuthLoginRequest(BaseModel):
     email: str
     username: str
     provider: str
+
+class VideoUpdateRequest(BaseModel):
+    title: str = None
+    description: str = None
 
 
 # ==============================
@@ -474,3 +478,94 @@ def get_user_by_email(email: str, db: Session = Depends(get_db)):
         "name": user.username
     }
 
+# ==============================
+# Video Template CRUD
+# ==============================
+
+@app.get("/video-templates")
+def get_video_templates(db: Session = Depends(get_db)):
+    print("🎬 Fetching video templates")
+    videos = db.query(VideoTemplate).order_by(VideoTemplate.id.desc()).all()
+    
+    # Map to frontend format
+    result = []
+    for v in videos:
+        result.append({
+            "id": v.id,
+            "title": v.title,
+            "user": v.user.username if v.user else "Anonymous",
+            "avatar": f"https://i.pravatar.cc/150?u={v.user_id}",
+            "duration": v.duration,
+            "thumbnail": v.video_url, # Use video URL as source for preview
+            "videoUrl": v.video_url
+        })
+    return result
+
+@app.post("/video-templates")
+async def post_video_template(
+    title: str = Form(...),
+    description: str = Form(...), # Mandatory now
+    duration: str = Form("00:05"),
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    print(f"⬆️ User {user_id} posting video template: {title}")
+    
+    # 1. Read file
+    contents = await file.read()
+    
+    # 2. Upload to Supabase (bucket: Video Template)
+    video_url = upload_community_video(contents, file.filename)
+    
+    if not video_url:
+        raise HTTPException(status_code=500, detail="Failed to upload video to storage")
+    
+    # 3. Save to database
+    new_video = VideoTemplate(
+        title=title,
+        description=description,
+        video_url=video_url,
+        user_id=user_id,
+        duration=duration
+    )
+    
+    db.add(new_video)
+    db.commit()
+    db.refresh(new_video)
+    
+    print(f"✅ Video template posted: {new_video.id}")
+    return {"success": True, "id": new_video.id, "video_url": video_url}
+
+@app.delete("/video-templates/{video_id}")
+def delete_video_template(
+    video_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    video = db.query(VideoTemplate).filter(VideoTemplate.id == video_id, VideoTemplate.user_id == user_id).first()
+    
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found or not authorized")
+    
+    db.delete(video)
+    db.commit()
+    return {"success": True}
+
+@app.put("/video-templates/{video_id}")
+def update_video_template(
+    video_id: int,
+    request: VideoUpdateRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    video = db.query(VideoTemplate).filter(VideoTemplate.id == video_id, VideoTemplate.user_id == user_id).first()
+    
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found or not authorized")
+    
+    if request.title:
+        video.title = request.title
+        
+    db.commit()
+    return {"success": True}
