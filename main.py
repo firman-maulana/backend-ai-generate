@@ -493,11 +493,15 @@ def get_video_templates(db: Session = Depends(get_db)):
         result.append({
             "id": v.id,
             "title": v.title,
+            "description": v.description,
             "user": v.user.username if v.user else "Anonymous",
+            "userId": v.user_id,
+            "userEmail": v.user.email if v.user else None,
             "avatar": f"https://i.pravatar.cc/150?u={v.user_id}",
             "duration": v.duration,
             "thumbnail": v.video_url, # Use video URL as source for preview
-            "videoUrl": v.video_url
+            "videoUrl": v.video_url,
+            "likes": v.likes
         })
     return result
 
@@ -553,9 +557,12 @@ def delete_video_template(
     return {"success": True}
 
 @app.put("/video-templates/{video_id}")
-def update_video_template(
+async def update_video_template(
     video_id: int,
-    request: VideoUpdateRequest,
+    title: str = Form(None),
+    description: str = Form(None),
+    duration: str = Form(None),
+    file: UploadFile = File(None),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
@@ -564,8 +571,21 @@ def update_video_template(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found or not authorized")
     
-    if request.title:
-        video.title = request.title
+    if title:
+        video.title = title
+    
+    if description:
+        video.description = description
+        
+    if file:
+        contents = await file.read()
+        video_url = upload_community_video(contents, file.filename)
+        if video_url:
+            video.video_url = video_url
+            if duration:
+                video.duration = duration
+    elif duration:
+        video.duration = duration
         
     db.commit()
     return {"success": True}
