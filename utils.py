@@ -1,0 +1,62 @@
+import os
+import uuid
+import requests
+from supabase import create_client, Client
+from fastapi import HTTPException
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Inisialisasi Supabase client
+url: str = os.getenv("SUPABASE_URL")
+key: str = os.getenv("SUPABASE_KEY")
+
+if url and key:
+    supabase: Client = create_client(url, key)
+else:
+    supabase = None
+    print("⚠️ Supabase credentials not found. Upload functionality will be disabled.")
+
+def download_and_upload_video(video_url: str) -> str:
+    """
+    Downloads a video from a URL and uploads it to Supabase storage.
+    Returns the public URL of the uploaded video.
+    """
+    if not supabase:
+        print("⚠️ Supabase not configured. Returning original URL.")
+        return video_url
+
+    try:
+        print(f"⬇️ Downloading video from Replicate: {video_url[:50]}...")
+        # Download video content
+        response = requests.get(video_url, stream=True)
+        response.raise_for_status()
+
+        # Generate unique filename
+        filename = f"{uuid.uuid4()}.mp4"
+        bucket_name = "videos"
+
+        print(f"⬆️ Uploading video to Supabase as {filename}...")
+        
+        # Upload ke Supabase
+        # Menggunakan response.content langsung (bytes)
+        res = supabase.storage.from_(bucket_name).upload(
+            path=filename,
+            file=response.content,
+            file_options={"content-type": "video/mp4"}
+        )
+
+        # Dapatkan public URL
+        public_url = supabase.storage.from_(bucket_name).get_public_url(filename)
+        print(f"✅ Video successfully uploaded to Supabase: {public_url[:50]}...")
+        
+        return public_url
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error downloading video from Replicate: {e}")
+        # Kembalikan URL asli jika gagal download
+        return video_url
+    except Exception as e:
+        print(f"❌ Error uploading to Supabase: {e}")
+        # Kembalikan URL asli jika gagal upload
+        return video_url

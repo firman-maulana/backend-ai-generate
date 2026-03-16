@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, JSON, Date
 from sqlalchemy.orm import relationship
 from database import Base
+from datetime import date
 
 class User(Base):
     __tablename__ = "users"
@@ -10,18 +11,7 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String, nullable=True)  # null kalau login google
     
-    chats = relationship("Chat", back_populates="user")
-
-
-class Chat(Base):
-    __tablename__ = "chats"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, default="New Chat")
-    user_id = Column(Integer, ForeignKey("users.id"))
-
-    user = relationship("User", back_populates="chats")
-    messages = relationship("Message", back_populates="chat")
+    messages = relationship("Message", back_populates="user")
 
 
 class Message(Base):
@@ -30,8 +20,8 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     role = Column(String)
     content = Column(Text)
-    chat_id = Column(Integer, ForeignKey("chats.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
+    date = Column(Date, default=date.today)  # Tanggal pesan (tanpa waktu)
+    meta_data = Column(JSON, nullable=True)  # Renamed from 'metadata' (reserved word)
 
-    chat = relationship("Chat", back_populates="messages")
-    user = relationship("User")
+    user = relationship("User", back_populates="messages")
