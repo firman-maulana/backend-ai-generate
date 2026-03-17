@@ -14,7 +14,7 @@ from models import Message, User, VideoTemplate
 from fastapi import HTTPException
 import bcrypt
 from auth import get_current_user_id
-from utils import download_and_upload_video, upload_community_video
+from utils import download_and_upload_video, upload_community_video, upload_image_to_supabase
 
 # ==============================
 # Create Tables
@@ -368,22 +368,20 @@ async def upload_image(
     unique_filename = f"{uuid.uuid4()}.{file_extension}"
     file_path = UPLOAD_DIR / unique_filename
     
-    # Save file
+    # Upload to Supabase
     try:
         contents = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(contents)
+        image_url = upload_image_to_supabase(contents, file.filename)
         
-        # Return URL - gunakan 127.0.0.1 agar bisa diakses dari AI Engine
-        # Atau bisa pakai IP address komputer
-        image_url = f"http://127.0.0.1:8000/uploads/{unique_filename}"
-        print(f"✅ Image uploaded: {image_url}")
+        if not image_url:
+            raise HTTPException(status_code=500, detail="Failed to upload image to Supabase")
+            
+        print(f"✅ Image uploaded to Supabase: {image_url}")
         
         return {
             "success": True,
             "url": image_url,
-            "filename": unique_filename,
-            "local_path": str(file_path.absolute())  # Tambahkan local path untuk fallback
+            "filename": unique_filename
         }
     except Exception as e:
         print(f"❌ Upload error: {e}")
